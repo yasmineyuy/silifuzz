@@ -127,49 +127,171 @@ paper
     is a fuzzing engine developed at Google for fuzzing large and slow targets
     like CPU emulators.
 
-## Prework
-
 ### Prework (for Bazel)
 
 ```shell
 git clone https://github.com/google/silifuzz.git && cd silifuzz
-SILIFUZZ_SRC_DIR=`pwd`
+### docker
+sudo docker run -it --tty --security-opt seccomp=unconfined --ulimit memlock=-1:-1 \
+--mount type=bind,source=${SILIFUZZ_SRC_DIR},target=/app \
+--name silifuzz-debian-bookworm --network host \
+debian:bookworm /bin/bash
+
 ./install_build_dependencies.sh  # Currently, works for the latest Ubuntu only.
+
 bazel build -c opt @silifuzz//tools:{snap_corpus_tool,fuzz_filter_tool,snap_tool,silifuzz_platform_id,simple_fix_tool_main} \
      @silifuzz//runner:reading_runner_main_nolibc \
      @silifuzz//orchestrator:silifuzz_orchestrator_main
-SILIFUZZ_BIN_DIR=`pwd`/bazel-bin
-cd "${SILIFUZZ_BIN_DIR}"
-```
-
-NOTE: You can use a Docker container to avoid polluting the host system: `docker
-run -it --tty --security-opt seccomp=unconfined --mount
-type=bind,source=${SILIFUZZ_SRC_DIR},target=/app ubuntu:noble /bin/bash -c
-"cd /app && ./install_build_dependencies.sh && bazel build ... && bazel test
-..."`
-
-### Prework (fuzzing Unicorn target)
-
-For Bazel, use the following commands.
-
-```shell
-cd "${SILIFUZZ_SRC_DIR}"
 COV_FLAGS_FILE="$(bazel info output_base)/external/fuzztest+/centipede/clang-flags.txt"
 bazel build -c opt --copt=-UNDEBUG --dynamic_mode=off \
   --per_file_copt=unicorn/.*@$(xargs < "${COV_FLAGS_FILE}" |sed -e 's/,/\\,/g' -e 's/ /,/g') @//proxies:unicorn_x86_64
 bazel build -c opt @fuzztest//centipede:centipede
-mkdir -p /tmp/wd
 
-# Fuzz the Unicorn proxy under Centipede 1000 times with parallelism of 30.
+sudo docker start -ai silifuzz-debian-bookworm
+sudo docker start -ai silifuzz-debian-bookworm-1 //newest  silifuzz-2
+sudo docker start -ai silifuzz-debian-bookworm-2 //old
+sudo docker start -ai silifuzz-debian-bookworm-new 
+export SILIFUZZ_SRC_DIR=/app
+export SILIFUZZ_BIN_DIR=/app/bazel-bin
+echo $SILIFUZZ_BIN_DIR
+echo $SILIFUZZ_SRC_DIR
+cd /app
+
+
 "${SILIFUZZ_BIN_DIR}/external/fuzztest+/centipede/centipede" \
   --binary="${SILIFUZZ_BIN_DIR}/proxies/unicorn_x86_64" \
   --workdir=/tmp/wd \
-  -j=30 --num_runs=1000
-```
+  -j=15
 
-NOTE: Please refer to
-[Centipede](https://github.com/google/fuzztest/blob/main/centipede/README.md#run-centipede-locally-)
-documentation on how to efficiently run the fuzzing engine.
+"${SILIFUZZ_BIN_DIR}/fuzzer/silifuzz_centipede_main" \
+--arch=x86_64 \
+--binary="${SILIFUZZ_BIN_DIR}/proxies/unicorn_x86_64" \
+--workdir=/tmp/zx_fuzz_6 \
+-j=8
+
+"${SILIFUZZ_BIN_DIR}/tools/simple_fix_tool_main" \
+--num_output_shards=10 \
+--output_path_prefix=/tmp/wd/runnable-corpus \
+--runner=${SILIFUZZ_BIN_DIR}/runner/reading_runner_main_nolibc \
+/tmp/wd/corpus.*
+
+ls -1 /tmp/wd/runnable-corpus.* > /tmp/shard_list
+echo 'version: "corpus_version"' > corpus_metadata
+${SILIFUZZ_BIN_DIR}/orchestrator/silifuzz_orchestrator_main --duration=30s \
+--runner=${SILIFUZZ_BIN_DIR}/runner/reading_runner_main_nolibc \
+--shard_list_file=/tmp/shard_list \
+--corpus_metadata_file=corpus_metadata \
+--enable_v1_compat_logging \
+--stderrthreshold=0 
+
+> run.log 2>&1
+
+
+### 查看runnable-corpus内容 
+ "${SILIFUZZ_BIN_DIR}/tools/snap_corpus_tool" list_snaps /tmp/wd/runnable-corpus.00006
+ 
+  "${SILIFUZZ_BIN_DIR}/tools/snap_corpus_tool" extract /tmp/wd/runnable-corpus.00006 2 output.pb
+
+ "${SILIFUZZ_BIN_DIR}/tools/snap_tool" --runner=${SILIFUZZ_BIN_DIR}/runner/reading_runner_main_nolibc trace output.pb
+ 
+ "${SILIFUZZ_BIN_DIR}/tools/snap_tool" print output.pb
+
+ "${SILIFUZZ_BIN_DIR}/tools/snap_tool" --runner=${SILIFUZZ_BIN_DIR}/runner/reading_runner_main_nolibc get_instructions op.pb > instructions.bin
+
+objdump -D -b binary -m i386:x86-64 instructions.bin
+objdump -D -b binary -m i386:x86-64 instructions/011426/op1.bin
+od -t x1 instructions/011426/op1.bin
+hexdump -C instructions/011426/op1.bin
+
+
+diff -y --width=170 op4_zx.log op4_in.log | expand -t 8 > diff4.log
+
+"${SILIFUZZ_BIN_DIR}/tools/snap_tool" print --regs=all op.pb
+"${SILIFUZZ_BIN_DIR}/tools/snap_tool" print --regs=non-0 op.pb
+# 显示所有浮点寄存器  
+"${SILIFUZZ_BIN_DIR}/tools/snap_tool" print --fpregs=all op.pb  
+  
+# 只显示控制寄存器  
+"${SILIFUZZ_BIN_DIR}/tools/snap_tool" print --fpregs=ctrl op.pb  
+  
+# 不显示浮点寄存器  
+"${SILIFUZZ_BIN_DIR}/tools/snap_tool" print --fpregs=none op.pb
+
+### trace需要单独build
+bazel build -c opt @silifuzz//tracing:trace_tool
+
+
+"${SILIFUZZ_BIN_DIR}/tracing/trace_tool" --runner=${SILIFUZZ_BIN_DIR}/runner/reading_runner_main_nolibc print --snippet=instructions.bin --arch=x86_64 --tracer=native
+
+### fuzzer/centipede
+bazel build -c opt @silifuzz//fuzzer:silifuzz_centipede_main
+bazel build -c opt @silifuzz//fuzzer:silifuzz_centipede
+
+"${SILIFUZZ_BIN_DIR}/fuzzer/silifuzz_centipede" --arch=x86_64 --binary="${SILIFUZZ_BIN_DIR}/proxies/unicorn_x86_64" --workdir=/tmp/zx_fuzz_6 -j=8
+
+
+${SILIFUZZ_BIN_DIR}/tools/snap_corpus_tool list_snaps /tmp/wd_support/runnable-corpus.00006 > debug_output.txt 2>&1
+
+bazel build //fuzzer:program_mutator_test
+bazel run //fuzzer:program_mutator_test
+bazel run //fuzzer:program_mutator_test -- --gtest_filter="ProgramMutator.*"
+
+
+### hashtest
+mkdir -p /tmp/hashtest 
+bazel run -c opt @silifuzz//fuzzer/hashtest:hashtest_generator -- --platform=intel-haswell -n 3000 --outdir /tmp/hashtest
+
+"${SILIFUZZ_BIN_DIR}/tools/snap_tool" --runner=${SILIFUZZ_BIN_DIR}/runner/reading_runner_main_nolibc make /tmp/hashtest/55a9c99bfc3f332224b614f08f66b8e67a9dab39.pb --out=/tmp/fixed_snapshot.pb
+Re-made snapshot successfully.
+"${SILIFUZZ_BIN_DIR}/tools/snap_tool" --runner=${SILIFUZZ_BIN_DIR}/runner/reading_runner_main_nolibc trace /tmp/fixed_snapshot.pb 
+
+mkdir -p /tmp/fixed_hashtest  
+for pb_file in /tmp/hashtest/*.pb; do  
+  filename=$(basename "$pb_file")  
+  "${SILIFUZZ_BIN_DIR}/tools/snap_tool" --runner=${SILIFUZZ_BIN_DIR}/runner/reading_runner_main_nolibc make "$pb_file" --out="/tmp/fixed_hashtest/$filename"  
+done
+# 生成语料库
+mkdir -p /tmp/hash  
+"${SILIFUZZ_BIN_DIR}/tools/snap_tool" generate_corpus --target_platform=intel-haswell --out=/tmp/hash/corpus_output.corpus /tmp/fixed_hashtest/*.pb
+ls /tmp/hash
+
+ls -1 /tmp/hash/corpus_output.corpus > /tmp/shard_list_hash
+echo 'version: "corpus_version"' > corpus_metadata
+${SILIFUZZ_BIN_DIR}/orchestrator/silifuzz_orchestrator_main --duration=30s \
+--runner=${SILIFUZZ_BIN_DIR}/runner/reading_runner_main_nolibc \
+--shard_list_file=/tmp/shard_list_hash \
+--corpus_metadata_file=corpus_metadata 
+
+# hash_runner
+mkdir -p /tmp/hashtest_results  
+bazel run -c opt @silifuzz//fuzzer/hashtest:hashtest_runner -- --tests=30000 --inputs=10 --repeat=10 --time=1m --platform=intel-haswell --print_proto > /tmp/hashtest_results/results.pb
+
+bazel run -c opt @silifuzz//fuzzer/hashtest:hashtest_runner -- --tests=30000 --inputs=10 --repeat=10 --time=1m --platform=intel-haswell --j=4
+
+bazel run -c opt @silifuzz//fuzzer/hashtest:hashtest_runner -- --seed 123 --tests 10000 --inputs 5 --repeat 5 --time 2s -j 2
+
+
+find /root/.cache/bazel -name "xed-iclass-enum.h" 2>/dev/null
+cat /root/.cache/bazel/_bazel_root/8c069df52082beee3c95ca17836fb8e2/sandbox/sandbox_stash/CppCompile/3171/execroot/_main/bazel-out/k8-opt/bin/external/+_repo_rules+libxed/_virtual_includes/xed/third_party/libxed/xed-iclass-enum.h
+
+
+find $(bazel info bazel-bin) -name "xed-iclass-enum.h" 2>/dev/null  
+find $(bazel info output_base) -name "xed-iclass-enum.txt" 2>/dev/null
+
+
+# 2. 使用 hashtest_runner 执行 ReconcileEndStates  
+mkdir -p /tmp/hashtest_results  
+bazel run -c opt @silifuzz//fuzzer/hashtest:hashtest_runner -- --tests=30000 --inputs=10 --repeat=10 --time=1m --platform=intel-haswell --print_proto > /tmp/hashtest_results/results.pb
+
+
+echo "Original snapshots: $(ls /tmp/hashtest/*.pb | wc -l)"  
+echo "Fixed snapshots: $(ls /tmp/fixed_hashtest/*.pb | wc -l)"
+
+# Fuzz the Unicorn proxy under Centipede 1000 times with parallelism of 30.
+"${SILIFUZZ_BIN_DIR}/external/com_google_fuzztest/centipede/centipede" \
+  --binary="${SILIFUZZ_BIN_DIR}/proxies/unicorn_x86_64" \
+  --workdir=/tmp/wd \
+  -j=30 --num_runs=1000
 
 ## Tools
 
@@ -390,7 +512,6 @@ cd "${SILIFUZZ_BIN_DIR}"
 "${SILIFUZZ_BIN_DIR}/tools/simple_fix_tool_main" \
   --num_output_shards=10 \
   --output_path_prefix=/tmp/wd/runnable-corpus \
-  --runner="${SILIFUZZ_BIN_DIR}/runner/reading_runner_main_nolibc" \
   /tmp/wd/corpus.*
 ```
 
@@ -420,14 +541,12 @@ The orchestrator will cycle through all the shards listed in the file passed in
 `--shard_list_file` argument.
 
 ```shell
-$ ls -1 /tmp/wd/runnable-corpus.* > /tmp/wd/shard_list
-$ echo 'version: "local_corpus"' > /tmp/wd/corpus_metadata
+$ ls -1 /tmp/wd/runnable-corpus.* > /tmp/shard_list
 # Will repeatedly run the corpus on all available CPU cores for 30s using
 # /tmp/wd/runnable-corpus.* selected randomly.
-$ ${SILIFUZZ_BIN_DIR}/orchestrator/silifuzz_orchestrator_main --duration=30s \
-     --runner=${SILIFUZZ_BIN_DIR}/runner/reading_runner_main_nolibc \
-     --shard_list_file=/tmp/wd/shard_list \
-     --corpus_metadata_file=/tmp/wd/corpus_metadata
+$ ./orchestrator/silifuzz_orchestrator_main --duration=30s \
+     --runner=./runner/reading_runner_main_nolibc \
+     --shard_list_file=/tmp/shard_list
 ```
 
 NOTE: The orchestrator can also load XZ-compressed corpus shards from files
