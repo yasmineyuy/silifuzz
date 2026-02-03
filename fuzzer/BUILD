@@ -37,6 +37,7 @@ cc_library(
         "program_mutator.h",
     ],
     deps = [
+        ":riscover_generator",
         "@silifuzz//instruction:capstone_disassembler",
         "@silifuzz//instruction:static_insn_filter",
         "@silifuzz//instruction:xed_util",
@@ -48,6 +49,22 @@ cc_library(
         "@libxed//:xed",
     ],
 )
+
+
+# 添加到 silifuzz/fuzzer/BUILD 文件中
+
+cc_library(
+    name = "riscover_generator",
+    srcs = ["riscover_generator.cc"],
+    hdrs = ["riscover_generator.h"],
+    deps = [
+        "@silifuzz//instruction:xed_util",  # 用于构建指令
+        "@silifuzz//util:arch",             # 用于架构定义
+        "@libxed//:xed",                    # 底层 XED 库
+        "@abseil-cpp//absl/random",         # 随机数支持
+    ],
+)
+
 
 cc_test(
     name = "program_mutator_test",

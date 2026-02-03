@@ -1,21 +1,30 @@
-// silifuzz/fuzzer/program_mutation_ops.cc
+// Copyright 2023 The Silifuzz Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "./fuzzer/program_mutation_ops.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <iostream>  // <--- 添加头文件
 #include <limits>
 #include <numeric>
 #include <random>
 
+#include "absl/log/check.h"
 #include "./fuzzer/program.h"
 #include "./fuzzer/program_arch.h"
-#include "./util/arch.h"
-#include "absl/log/check.h"
-// 引入 RISCover 生成器
-#include "./fuzzer/riscover_generator.h"
+#include "./util/arch.h"  // IWYU pragma: keep
 
 namespace silifuzz {
 
@@ -35,7 +44,6 @@ static constexpr auto BestIntType() {
   }
 }
 
-// 恢复原始的 RandomizeBuffer 模板实现
 template <size_t N>
 void RandomizeBuffer(MutatorRng& rng, uint8_t (&buffer)[N]) {
   using ResultType = MutatorRng::result_type;
@@ -63,11 +71,20 @@ void RandomizeBuffer(MutatorRng& rng, uint8_t (&buffer)[N]) {
 void CopyOrRandomizeInstructionDisplacementBoundary(
     MutatorRng& rng, const InstructionDisplacementInfo& original,
     InstructionDisplacementInfo& mutated, size_t num_boundaries) {
+  // Does this displacement need fixup?
   if (mutated.valid()) {
     if (original.valid() && mutated.encoded_byte_displacement ==
                                 original.encoded_byte_displacement) {
+      // Since the byte displacement is unchanged, preserve the boundary.
+      // The boundary may be out of sync with the encoded byte displacement,
+      // so we don't worry about the exact value of the byte displacement,
+      // we're only observing that the mutation did not change it.
       mutated.instruction_boundary = original.instruction_boundary;
     } else {
+      // If this was a newly discovered displacement, randomize the boundary.
+      // If the displacement was mutated, randomize the boundary.
+      // Trying to derive the boundary from the mutated displacement has a
+      // number of pitfalls that we avoid with a complete re-randomization.
       RandomizeInstructionDisplacementBoundary(rng, mutated, num_boundaries);
     }
   }
@@ -78,6 +95,7 @@ void ShiftOrRandomizeInstructionDisplacementBoundary(
     size_t num_boundaries) {
   if (info.valid()) {
     int64_t shifted = (int64_t)info.instruction_boundary + index_offset;
+    // If the shifted value is out of bounds, randomize it.
     if (shifted < 0 || shifted >= num_boundaries) {
       shifted = RandomIndex(rng, num_boundaries);
     }
@@ -87,6 +105,23 @@ void ShiftOrRandomizeInstructionDisplacementBoundary(
 
 }  // namespace
 
+// This function tries to determine which instruction each displacement of a
+// newly mutated instruction should point to.
+// 1) If the old instruction has the same kind of displacement (they are both
+// direct branches, for example) and the byte displacement has not changed (the
+// mutator did not touch the encoded displacement value) then copy the
+// instruction index from the old instruction to the new instruction.
+// 2) If the byte displacement was touched by the mutator, then randomize the
+// instruction index. The encoded byte displacement may be out of sync with the
+// symbolic instruction index, so we can't reason how the mutation affected the
+// index - just assume that any mutation randomizes the index. Even if the
+// encoding was kept in sync with the index, a mutation could result in a byte
+// displacement that didn't point to a valid instruction boundary and we'd need
+// to figure out how to fix this up in an unbiased way. In general, it's simpler
+// to completely randomize the displacement when it is touched.
+// 3) If the new instruction has a displacement but the old instruction does
+// not, then randomize the displacement. Newly discovered displacements should
+// be both random and valid.
 template <typename Arch>
 void CopyOrRandomizeInstructionDisplacementBoundaries(
     MutatorRng& rng, const Instruction<Arch>& original,
@@ -120,19 +155,36 @@ template void ShiftOrRandomizeInstructionDisplacementBoundaries(
 template <typename Arch>
 bool MutateSingleInstruction(MutatorRng& rng, const Instruction<Arch>& original,
                              Instruction<Arch>& mutated) {
-  // 使用 Arch::kMaxInstructionLength 替代 undefined variables
-  uint8_t bytes[Arch::kMaxInstructionLength];
+  InstructionByteBuffer<Arch> bytes;
   size_t num_old_bytes = original.encoded.size();
 
+  // Individual mutations may not be successful. In some parts of the encoding
+  // space it may be more difficult to mutate than others. Retry the mutation a
+  // finite number of times so that callers of this function can assume that it
+  // almost always succeeds.
+  // In theory this could be an infinite loop, but it's implemented as a finite
+  // loop to limit the worst case behavior.
   for (size_t i = 0; i < 64; ++i) {
     if constexpr (kInstructionInfo<Arch>.max_size !=
                   kInstructionInfo<Arch>.min_size) {
+      // Randomize the buffer - a mutation could cause the instruction to become
+      // larger so we need to randomize the bytes after the instruction.
+      // It's simpler/faster to randomize the whole buffer since we generate
+      // random bytes in parallel.
       RandomizeBuffer(rng, bytes);
     }
 
+    // Copy in the original bytes.
     memcpy(bytes, original.encoded.data(), num_old_bytes);
 
+    // Keep trying to mutate until we hit a valid instruction.
+    // This lets us "push through" sparse parts of the encoding space.
+    // We don't want to mutate too much, however, because at some point it
+    // stops being a mutation and starts being a new random instruction.
+    // This implementation is a bit ad-hoc and could use some experimentation
+    // and tunning for the constants, etc.
     for (size_t j = 0; j < 3; ++j) {
+      // TODO(ncbray): other mutation modes. Randomize byte, swap bytes, etc.
       FlipRandomBit(rng, bytes, num_old_bytes);
       if (InstructionFromBytes(bytes, sizeof(bytes), mutated)) {
         return true;
@@ -149,43 +201,13 @@ template bool MutateSingleInstruction(MutatorRng& rng,
                                       const Instruction<AArch64>& original,
                                       Instruction<AArch64>& mutated);
 
-// --- RISCover 核心集成部分 ---
-
-// 1. 通用模板声明 (不定义，强制特化)
 template <typename Arch>
-bool GenerateSingleInstruction(MutatorRng& rng, Instruction<Arch>& instruction);
-
-// 2. X86_64 特化实现：使用 RiscoverGenerator
-template <>
-bool GenerateSingleInstruction<X86_64>(MutatorRng& rng,
-                                       Instruction<X86_64>& instruction) {
-  RiscoverGenerator generator;
-  uint8_t bytes[X86_64::kMaxInstructionLength];
-  size_t len = sizeof(bytes);
-
-  // 优先尝试 RISCover 策略
-  for (int i = 0; i < 10; ++i) {
-    len = sizeof(bytes);
-    if (generator.GenerateInstruction(rng, bytes, len)) {
-      if (InstructionFromBytes(bytes, len, instruction)) {
-        static int print_count = 0;
-        if (print_count++ < 10) {
-          std::cout << "[Riscover] Successfully generated instruction! Length: "
-                    << len << std::endl;
-        }
-        return true;
-        return true;
-      }
-    }
-  }
-  static int fail_count = 0;
-  if (fail_count++ < 5) {
-    std::cout
-        << "[Riscover] Failed to generate valid instruction, falling back..."
-        << std::endl;
-  }
-
-  // 保底策略：如果生成失败，回退到随机生成
+bool GenerateSingleInstruction(MutatorRng& rng,
+                               Instruction<Arch>& instruction) {
+  InstructionByteBuffer<Arch> bytes;
+  // It may take us a few tries to find a random set of bytes that decompile.
+  // In theory this could be an infinite loop, but it's implemented as a finite
+  // loop to limit the worst case behavior.
   for (size_t i = 0; i < 64; ++i) {
     RandomizeBuffer(rng, bytes);
     if (InstructionFromBytes(bytes, sizeof(bytes), instruction)) return true;
@@ -193,17 +215,10 @@ bool GenerateSingleInstruction<X86_64>(MutatorRng& rng,
   return false;
 }
 
-// 3. AArch64 特化实现：保持原有逻辑
-template <>
-bool GenerateSingleInstruction<AArch64>(MutatorRng& rng,
-                                        Instruction<AArch64>& instruction) {
-  uint8_t bytes[AArch64::kMaxInstructionLength];
-  for (size_t i = 0; i < 64; ++i) {
-    RandomizeBuffer(rng, bytes);
-    if (InstructionFromBytes(bytes, sizeof(bytes), instruction)) return true;
-  }
-  return false;
-}
+template bool GenerateSingleInstruction(MutatorRng& rng,
+                                        Instruction<X86_64>& instruction);
+template bool GenerateSingleInstruction(MutatorRng& rng,
+                                        Instruction<AArch64>& instruction);
 
 void FlipBit(uint8_t* buffer, size_t bit) {
   buffer[bit >> 3] ^= 1 << (bit & 0b111);
@@ -213,6 +228,7 @@ void FlipRandomBit(MutatorRng& rng, uint8_t* buffer, size_t buffer_size) {
   FlipBit(buffer, RandomIndex(rng, buffer_size * 8));
 }
 
+// Throw away instruction until we're under the length limit.
 template <typename Arch>
 bool LimitProgramLength(MutatorRng& rng, Program<Arch>& program,
                         size_t max_len) {

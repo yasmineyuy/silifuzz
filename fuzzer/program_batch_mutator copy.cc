@@ -93,18 +93,10 @@ ProgramBatchMutator<Arch>::ProgramBatchMutator(uint64_t seed,
                   RetryMutation<Arch>{
                       128,
                       SelectMutation<Arch>(
-                          Weighted(500.0, InsertGeneratedInstruction<Arch>{}),
-                          Weighted(2.0, MutateInstruction<Arch>{}),
+                          Weighted(2.0, InsertGeneratedInstruction<Arch>{}),
+                          Weighted(5.0, MutateInstruction<Arch>{}),
                           Weighted(1.0, SwapInstructions<Arch>{}),
-                          Weighted(2.0, DeleteInstruction<Arch>{3})
-                          //  Weighted(10.0, InsertLDMXCSRInstruction<Arch>{}),
-                          //  // LDMXCSR
-                          // Weighted(10.0, InsertFLDCWInstruction<Arch>{}),
-                          // Weighted(50.0, InsertIDIVInstruction<Arch>{}),  //
-                          //  IDIV
-                          // Weighted(10.0, InsertFLDCWThenIDIV<Arch>{})
-
-                          )}}),
+                          Weighted(2.0, DeleteInstruction<Arch>{3}))}}),
           Weighted(0.5 * crossover_weight, CrossoverInsert<Arch>{}),
           Weighted(0.5 * crossover_weight, CrossoverOverwrite<Arch>{}))});
 }
