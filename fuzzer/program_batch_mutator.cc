@@ -94,7 +94,7 @@ ProgramBatchMutator<Arch>::ProgramBatchMutator(uint64_t seed,
                       128,
                       SelectMutation<Arch>(
                           Weighted(2.0, InsertGeneratedInstruction<Arch>{}),
-                          Weighted(5.0, MutateInstruction<Arch>{}),
+                          Weighted(100.0, MutateInstruction<Arch>{}),
                           Weighted(1.0, SwapInstructions<Arch>{}),
                           Weighted(2.0, DeleteInstruction<Arch>{3}))}}),
           Weighted(0.5 * crossover_weight, CrossoverInsert<Arch>{}),

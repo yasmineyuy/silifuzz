@@ -152,11 +152,31 @@ template void ShiftOrRandomizeInstructionDisplacementBoundaries(
     MutatorRng& rng, Instruction<AArch64>& instruction, int64_t index_offset,
     size_t num_boundaries);
 
+    // [新增] 前向声明
+// 注意：InstructionByteBuffer<X86_64> 本质是数组类型，作为参数传递时会自动退化为指针或需要引用
+// 为了匹配实现中的引用传参 InstructionByteBuffer<X86_64>& out_buffer
+bool SmartMutateX86Instruction(const uint8_t* bytes, size_t len, 
+                               InstructionByteBuffer<X86_64>& out_buffer, size_t& out_len, 
+                               MutatorRng& rng);
 template <typename Arch>
+
+
 bool MutateSingleInstruction(MutatorRng& rng, const Instruction<Arch>& original,
                              Instruction<Arch>& mutated) {
   InstructionByteBuffer<Arch> bytes;
   size_t num_old_bytes = original.encoded.size();
+  if constexpr (std::is_same_v<Arch, X86_64>) {
+      if (std::bernoulli_distribution(0.5)(rng)) {
+          size_t new_len = 0;
+          // 直接传递 bytes 引用，因为类型匹配
+          if (SmartMutateX86Instruction(original.encoded.data(), num_old_bytes, 
+                                        bytes, new_len, rng)) {
+              if (InstructionFromBytes(bytes, new_len, mutated)) {
+                  return true;
+              }
+          }
+      }
+  }
 
   // Individual mutations may not be successful. In some parts of the encoding
   // space it may be more difficult to mutate than others. Retry the mutation a
@@ -201,16 +221,49 @@ template bool MutateSingleInstruction(MutatorRng& rng,
                                       const Instruction<AArch64>& original,
                                       Instruction<AArch64>& mutated);
 
+// template <typename Arch>
+// bool GenerateSingleInstruction(MutatorRng& rng,
+//                                Instruction<Arch>& instruction) {
+//   InstructionByteBuffer<Arch> bytes;
+//   // It may take us a few tries to find a random set of bytes that decompile.
+//   // In theory this could be an infinite loop, but it's implemented as a finite
+//   // loop to limit the worst case behavior.
+//   for (size_t i = 0; i < 64; ++i) {
+//     RandomizeBuffer(rng, bytes);
+//     if (InstructionFromBytes(bytes, sizeof(bytes), instruction)) return true;
+//   }
+//   return false;
+// }
+
 template <typename Arch>
 bool GenerateSingleInstruction(MutatorRng& rng,
                                Instruction<Arch>& instruction) {
   InstructionByteBuffer<Arch> bytes;
-  // It may take us a few tries to find a random set of bytes that decompile.
-  // In theory this could be an infinite loop, but it's implemented as a finite
-  // loop to limit the worst case behavior.
+  
   for (size_t i = 0; i < 64; ++i) {
     RandomizeBuffer(rng, bytes);
-    if (InstructionFromBytes(bytes, sizeof(bytes), instruction)) return true;
+    
+    // 先尝试解码
+    if (InstructionFromBytes(bytes, sizeof(bytes), instruction)) {
+        
+        // [RISCover 策略]
+        if constexpr (std::is_same_v<Arch, X86_64>) {
+            size_t smart_len = 0;
+            InstructionByteBuffer<Arch> smart_bytes;
+            
+            // 尝试整形
+            if (SmartMutateX86Instruction(instruction.encoded.data(), instruction.encoded.size(),
+                                          smart_bytes, smart_len, rng)) {
+                Instruction<Arch> smart_inst;
+                // 如果整形成功，使用新指令
+                if (InstructionFromBytes(smart_bytes, smart_len, smart_inst)) {
+                    instruction = smart_inst;
+                    return true;
+                }
+            }
+        }
+        return true;
+    }
   }
   return false;
 }
