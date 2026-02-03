@@ -23,6 +23,7 @@
 #include "./fuzzer/program_arch.h"
 #include "./instruction/xed_util.h"
 #include "./util/arch.h"
+#include "./fuzzer/hashtest/testgeneration/xed_operand_util.h"
 
 extern "C" {
 #include "third_party/libxed/xed-interface.h"
@@ -36,6 +37,24 @@ namespace {
 bool AcceptInstruction(const xed_decoded_inst_t& xedd) {
   const xed_inst_t* instruction = xed_decoded_inst_inst(&xedd);
   return InstructionIsAllowedInRunner(instruction);
+  // 1. 保留原有的过滤逻辑 (检查指令是否允许在 Runner 中执行)
+  if (!InstructionIsAllowedInRunner(instruction)) {
+    return false;
+  }
+
+  // 2. [新增] 屏蔽段寄存器指令 (利用 xed_operand_util)
+  // 遍历指令的所有操作数，如果发现任何一个是段寄存器 (CS, DS, ES, FS, GS, SS)，则拒绝该指令
+  unsigned int noperands = xed_inst_noperands(instruction);
+  for (unsigned int i = 0; i < noperands; ++i) {
+    const xed_operand_t* op = xed_inst_operand(instruction, i);
+    
+    // 调用 hashtest 里的 OperandIsSegmentRegister 函数
+    if (OperandIsSegmentRegister(op)) {
+      return false; // 拒绝指令
+    }
+  }
+
+  return true;
 }
 
 InstructionDisplacementInfo GetDirectBranchInfo(
@@ -110,7 +129,7 @@ uint64_t GetInterestingImmediate(uint64_t current_val, uint32_t width_bits, Muta
         0x8000000000000000ULL, 
         0x7FFFFFFFFFFFFFFFULL,
         0xAAAAAAAAAAAAAAAAULL,
-        0x5555555555555555ULL,
+  
     };
     
     // Size is 9
