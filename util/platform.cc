@@ -16,10 +16,10 @@
 
 #include <cstdint>
 
-#include "absl/container/flat_hash_map.h"
 #include "./util/arch.h"
 #include "./util/checks.h"
 #include "./util/itoa.h"
+#include "absl/container/flat_hash_map.h"
 
 namespace silifuzz {
 
@@ -50,10 +50,8 @@ ArchitectureId PlatformArchitecture(PlatformId platform) {
     case PlatformId::kIntelGraniteRapids:
     case PlatformId::kAmdSiena:
     case PlatformId::kAmdTurin:
-    case PlatformId::kAmdVenice:
       return ArchitectureId::kX86_64;
     case PlatformId::kArmNeoverseN1:
-    case PlatformId::kArmNeoverseN2:
     case PlatformId::kAmpereOne:
     case PlatformId::kArmNeoverseV2:
     case PlatformId::kArmNeoverseN3:
@@ -119,7 +117,17 @@ PlatformId IntelPlatformIdFromCpuId(uint32_t family, uint32_t model,
             " stepping = ", stepping);
   return PlatformId::kUndefined;
 }
+PlatformId ZhaoxinPlatformIdFromCpuId(uint32_t family, uint32_t model,
+                                      uint32_t stepping) {
+  //
+  if (family == 7 && model == 11) {
+    return PlatformId::kIntelHaswell;  // kZhaoxinKaiXianKX7000
+  }
 
+  LOG_ERROR("Unknown ZHAOXIN platform: family = ", family, " model = ", model,
+            " stepping = ", stepping);
+  return PlatformId::kUndefined;
+}
 PlatformId AmdPlatformIdFromCpuId(uint32_t family, uint32_t model,
                                   uint32_t stepping) {
   if (family == 23 && (model == 48 || model == 49)) return PlatformId::kAmdRome;
@@ -130,9 +138,8 @@ PlatformId AmdPlatformIdFromCpuId(uint32_t family, uint32_t model,
     return PlatformId::kAmdRyzenV3000;
   if (family == 25 && (model >= 160 && model <= 175))
     return PlatformId::kAmdSiena;
+  if (family == 23 && (model == 1)) return PlatformId::kIntelHaswell;
   if (family == 26 && (model <= 15)) return PlatformId::kAmdTurin;
-  if (family == 26 && (model >= 80 && model <= 95))
-    return PlatformId::kAmdVenice;
 
   LOG_ERROR("Unknown AMD platform: family = ", family, " model = ", model,
             " stepping = ", stepping);
@@ -145,8 +152,6 @@ PlatformId ArmPlatformIdFromMainId(uint32_t implementer, uint32_t part_number) {
     switch (part_number) {
       case 0xd0c:
         return PlatformId::kArmNeoverseN1;
-      case 0xd49:
-        return PlatformId::kArmNeoverseN2;
       case 0xd4f:
         return PlatformId::kArmNeoverseV2;
       case 0xd8e:
