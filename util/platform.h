@@ -44,7 +44,7 @@ enum class PlatformId {
   kIntelEmeraldRapids = 15,
   kReserved16 = 16,
   kAmdRyzenV3000 = 17,
-  kReserved18 = 18,
+  kZhaoxinKaiXianKX7000 = 18,
   kReserved19 = 19,
 
   kReserved20 = 20,
@@ -74,12 +74,10 @@ enum class PlatformId {
   kArmNeoverseV2 = 43,
   kAmdTurin = 44,
   kArmNeoverseN3 = 45,
-  kArmNeoverseN2 = 46,
-  kAmdVenice = 47,
   // The values below are meta-values that don't have proto::PlatformId
   // representation. Never persisted and can be renumbered as needed.
-  kAny = 48,          // any platform for platform selectors
-  kNonExistent = 49,  // for tests only
+  kAny = 46,          // any platform for platform selectors
+  kNonExistent = 47,  // for tests only
 };
 
 // Max valid value of PlatformId, min being kUndefined.
@@ -87,57 +85,56 @@ inline constexpr PlatformId kMaxPlatformId = PlatformId::kNonExistent;
 
 // EnumStr() works for PlatformId.
 template <>
-inline constexpr const char* EnumNameMap<PlatformId>[ToInt(kMaxPlatformId) +
-                                                     1] = {
-    "UNDEFINED-PLATFORM-ID",
-    "intel-skylake",
-    "intel-haswell",
-    "intel-broadwell",
-    "intel-ivybridge",
-    "intel-cascadelake",
-    "amd-rome",
-    "intel-icelake",
-    "amd-milan",
-    "intel-sapphirerapids",
-    "amd-genoa",
-    "intel-coffeelake",
-    "intel-alderlake",
-    "arm-neoverse-n1",
-    "ampere-one",
-    "intel-emeraldrapids",
-    "reserved-16",
-    "amd-ryzen-v3000",
-    "reserved-18", "reserved-19",
-    "reserved-20",
-    "reserved-21",
-    "reserved-22",
-    "reserved-23",
-    "reserved-24",
-    "reserved-25",
-    "reserved-26",
-    "reserved-27",
-    "reserved-28",
-    "reserved-29",
-    "reserved-30",
-    "reserved-31",
-    "reserved-32",
-    "reserved-33",
-    "reserved-34",
-    "reserved-35",
-    "reserved-36",
-    "reserved-37",
-    "reserved-38",
-    "reserved-39",
-    "reserved-40",
-    "intel-graniterapids",
-    "amd-siena",
-    "arm-neoverse-v2",
-    "amd-turin",
-    "arm-neoverse-n3",
-    "arm-neoverse-n2",
-    "amd-venice",
-    "ANY-PLATFORM",
-    "NON-EXISTENT-PLATFORM",
+inline constexpr const char*
+    EnumNameMap<PlatformId>[ToInt(kMaxPlatformId) + 1] = {
+        "UNDEFINED-PLATFORM-ID",
+        "intel-skylake",
+        "intel-haswell",
+        "intel-broadwell",
+        "intel-ivybridge",
+        "intel-cascadelake",
+        "amd-rome",
+        "intel-icelake",
+        "amd-milan",
+        "intel-sapphirerapids",
+        "amd-genoa",
+        "intel-coffeelake",
+        "intel-alderlake",
+        "arm-neoverse-n1",
+        "ampere-one",
+        "intel-emeraldrapids",
+        "reserved-16",
+        "amd-ryzen-v3000",
+        "zhaoxin-kx7000",
+        "reserved-19",
+        "reserved-20",
+        "reserved-21",
+        "reserved-22",
+        "reserved-23",
+        "reserved-24",
+        "reserved-25",
+        "reserved-26",
+        "reserved-27",
+        "reserved-28",
+        "reserved-29",
+        "reserved-30",
+        "reserved-31",
+        "reserved-32",
+        "reserved-33",
+        "reserved-34",
+        "reserved-35",
+        "reserved-36",
+        "reserved-37",
+        "reserved-38",
+        "reserved-39",
+        "reserved-40",
+        "intel-graniterapids",
+        "amd-siena",
+        "arm-neoverse-v2",
+        "amd-turin",
+        "arm-neoverse-n3",
+        "ANY-PLATFORM",
+        "NON-EXISTENT-PLATFORM",
 };
 
 // Returns the PlatformId of where this code runs on or kUndefined if
@@ -162,6 +159,8 @@ PlatformId IntelPlatformIdFromCpuId(uint32_t family, uint32_t model,
                                     uint32_t stepping);
 PlatformId AmdPlatformIdFromCpuId(uint32_t family, uint32_t model,
                                   uint32_t stepping);
+PlatformId ZhaoxinPlatformIdFromCpuId(uint32_t family, uint32_t model,
+                                      uint32_t stepping);
 PlatformId ArmPlatformIdFromMainId(uint32_t implementer, uint32_t part_number);
 }  // namespace internal
 
