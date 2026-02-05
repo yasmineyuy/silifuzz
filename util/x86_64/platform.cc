@@ -72,13 +72,30 @@ PlatformId AmdPlatformId() {
   return internal::AmdPlatformIdFromCpuId(family, model, stepping);
 }
 
+PlatformId ZhaoxinPlatformId() {
+  X86CPUIDResult result;
+  X86CPUID(0x1, &result);
+  const uint32_t family = DecodeFamily(result.eax);
+  const uint32_t model =
+      DecodeIntelModel(result.eax);  // ZHAOXIN使用Intel兼容的model解码 （？）
+  const uint32_t stepping = DecodeStepping(result.eax);
+  // LOG_INFO("ZHAOXIN CPU detected: family=", family, " model=", model, "
+  // stepping=", stepping);
+  return internal::ZhaoxinPlatformIdFromCpuId(family, model, stepping);
+}
 // Returns platform Id of the current x86_64 platform.
 PlatformId DoCurrentPlatformId() {
   const X86CPUVendorID vendor_id;
+  // LOG_INFO("Detected vendor: ", vendor_id.get());
+  // LOG_INFO("IsIntel: ", vendor_id.IsIntel());
+  // LOG_INFO("IsAMD: ", vendor_id.IsAMD());
+  // LOG_INFO("IsZhaoxin: ", vendor_id.IsZhaoxin());
   if (vendor_id.IsIntel()) {
     return IntelPlatformId();
   } else if (vendor_id.IsAMD()) {
     return AmdPlatformId();
+  } else if (vendor_id.IsZhaoxin()) {
+    return ZhaoxinPlatformId();
   } else {
     LOG_ERROR("Unknown x86_64 vendor: ", vendor_id.get());
     return PlatformId::kUndefined;
